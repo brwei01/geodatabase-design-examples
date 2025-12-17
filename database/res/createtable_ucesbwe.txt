@@ -1,0 +1,58 @@
+drop schema if exists ucesbwe cascade;
+create schema ucesbwe;
+
+create table ucesbwe.bus_station (
+	bus_station_id serial not null,
+	last_repainted date not null,
+	name varchar(150) not null	
+);
+alter table ucesbwe.bus_station drop column if exists location;
+select AddGeometryColumn ('ucesbwe','bus_station', 'location', 27700, 'polygon', 2);
+
+create table ucesbwe.cleaners(
+	cleaner_id serial not null,
+	cleaner_name varchar(150) not null,
+	cleaner_surname varchar(150) not null,
+	date_of_birth date not null,
+	contact_number varchar(150) not null,
+	cost_per_hour double precision not null
+);
+
+
+create table ucesbwe.bus_station_cleaner(
+	bus_station_id int not null,
+	cleaner_id int not null,
+	bus_station_cleaner_id serial not null,
+	hours_per_week double precision not null
+);
+
+
+create table ucesbwe.waiting_room(
+	waiting_room_id serial not null,
+	bus_station_id int not null,
+	opening_time double precision not null,
+	closing_time double precision not null
+);
+alter table ucesbwe.waiting_room drop column if exists location;
+select AddGeometryColumn ('ucesbwe', 'waiting_room', 'location', 27700, 'POLYGON', 2);
+
+
+create table ucesbwe.air_quality_sensors(
+	sensor_make varchar(150) not null,
+	sensor_installation_date date not null,
+	sensor_id serial not null,
+	waiting_room_id int not null
+);
+alter table ucesbwe.air_quality_sensors drop column if exists location;
+select AddGeometryColumn ('ucesbwe', 'air_quality_sensors', 'location', 27700, 'POINT', 2);
+
+
+create table ucesbwe.air_quality_values(
+	air_quality_id serial not null,
+	sensor_id int not null,
+	total_voc double precision not null,
+	reading_timestamp date not null,
+	temperature double precision not null,
+	humidity double precision not null
+);
+

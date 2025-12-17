@@ -1,0 +1,327 @@
+--===============================================================
+--===============================================================
+--Decision_1: For pitches that are below average elevation for all the pitches in the 2 sites, an upgrade to the drainage system is suggested. Figure out the cost to build drainage trenches around the pitches’ perimeter below average elevation.
+
+with
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. Calculate the perimeter and elevation for pitches
+
+pitch_perimeter_elevation as
+(Select pitch_number, st_perimeter(location) as perimeter, st_zmin(location) as elevation 
+From ucesbwe.pitch),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. Calculate the average elevation from all pitches
+
+pitch_average_elevation as
+(Select avg(elevation) as average_elevation
+From pitch_perimeter_elevation),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. Join the average elevation to table containing pitch perimeter and elevation
+
+pitch_perimeter_elevation_avg_elevation as
+(Select a.*, b.* from pitch_perimeter_elevation a, pitch_average_elevation b),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 4. get the pitches' details where drainage systems needs to be upgraded
+
+pitch_upgradation as
+(Select *
+From pitch_perimeter_elevation_avg_elevation
+Where elevation < average_elevation),
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. join with latest_parameter to prepare to calculate the total cost
+
+pitch_upgradation_cost as
+(Select a.*, b.parameter_value as cost, b.date_created
+from pitch_upgradation a, ucesbwe.latest_parameter b
+where parameter_item_name = 'drainage_system')
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. Calculate the total cost
+
+Select sum(cost) as total_cost_to_upgrade_drainage, date_created
+from pitch_upgradation_cost
+Group by date_created;
+
+
+
+
+--===============================================================
+--===============================================================
+--Decision_2: For the purpose of marketing, find the economic pitch with shared drinking water hoses and calculate the profit these pitches made from the most recent month.
+
+with
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. Add pitch_type information to pitch
+
+pitch_with_pitch_type as
+(Select a.*, b.pitch_type 
+from ucesbwe.pitch a left join ucesbwe.pitch_types b
+On a.zone_id = b.zone_id),
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. get the pitch_id which has on site drinking water hoses available as shared.
+
+pitch_id_with_shared_drinkingwater as
+(Select distinct pitch_id, status_check_month 
+from ucesbwe.pitch_facility_status
+Where on_pitch_drinkingwater = 
+(Select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator
+Where facility_status_indicator_description like '%shared%')
+Order by status_check_month desc),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. inner join the pitch ids with shared drinking water hoses to pitch_with_pitch_type
+-- to filter out the economic pitches with shared drinking water hoses.
+
+economic_pitches_with_shared_drinking_water as
+(Select a.*, b.*
+From pitch_with_pitch_type a, pitch_id_with_shared_drinkingwater b
+Where a.pitch_id = b.pitch_id and a.pitch_type = 'economic_pitch'),
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 4. join the cost to upgrade shared facilities to private ones for preparation of calculation
+
+economic_pitches_with_shared_drinking_water_with_cost as
+(Select a.*, b.*
+From economic_pitches_with_shared_drinking_water a, ucesbwe.latest_parameter b
+Where b.parameter_item_name = 'shared_facilities_to_private')
+
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. Calculate the total cost to upgrade shared drinking water hoses to private for these pitches
+
+Select sum(parameter_value) as total_cost_upgrade_drinkingwater_economic_pitch, date_created
+From economic_pitches_with_shared_drinking_water_with_cost
+Group by date_created;
+
+
+
+
+
+--===============================================================
+--===============================================================
+--Decision_3: Find the mostly visited premium pitches from the most recent month and investigate the facility status of these pitches. How much will it cost to upgrade all the shared facilities to private?
+
+with
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. Add pitch_type information to pitch
+
+pitch_with_pitch_type as
+(Select a.*, b.pitch_type 
+from ucesbwe.pitch a left join ucesbwe.pitch_types b
+On a.zone_id = b.zone_id),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. filter out the 'premium' pitches
+
+premium_pitches as
+(Select * from pitch_with_pitch_type
+Where pitch_type = 'premium_pitch'),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. Select the visited times data for the most recent month for all pitches
+
+recent_month_visited_times as
+(Select a.*, b.visited_times_per_month
+From (Select pitch_id, max(month) as recent_month 
+from ucesbwe.visited_times_report group by pitch_id) a 
+join (Select pitch_id, visited_times_per_month from ucesbwe.visited_times_report) b
+on a.pitch_id = b.pitch_id),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. Join visited times data to premium pitches
+
+premium_pitches_with_visited_times as
+(Select a.*, b.visited_times_per_month
+From premium_pitches a 
+Inner join recent_month_visited_times b
+On a.pitch_id = b.pitch_id),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 4. Filter out the premium pitch with highest visited times from the most recent month
+
+most_visited_premium_pitch as
+(select pitch_id, pitch_number, visited_times_per_month
+from premium_pitches_with_visited_times
+where visited_times_per_month = (select max(visited_times_per_month) from premium_pitches_with_visited_times)), 
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. join facility status to these pitches
+
+mv_premium_pitch_facility_status as
+(Select a.*, b.on_pitch_drinkingwater, b.on_pitch_greywater, b.on_pitch_charging_hook, b.on_pitch_bbq_stand, b.on_pitch_awning, b.on_pitch_privacy_hedge, b.on_pitch_tv_aerial_outlet
+From most_visited_premium_pitch a
+join ucesbwe.pitch_facility_status b
+On a.pitch_id = b.pitch_id),
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 6. Count how many shared facilities in total
+
+shared_facilities_num as
+(select pitch_id, 
+sum(case when on_pitch_drinkingwater = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1 
+When on_pitch_greywater = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1
+When on_pitch_charging_hook = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1
+When on_pitch_bbq_stand = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1
+When on_pitch_awning = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1
+When on_pitch_privacy_hedge = (select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%') 
+Then 1
+When on_pitch_tv_aerial_outlet =(select facility_status_indicator_id 
+from ucesbwe.facility_status_indicator 
+Where facility_status_indicator_description like '%shared%')
+Then 1
+End ) as total_shared_facilities
+From mv_premium_pitch_facility_status
+Group by pitch_id),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 7. join cost to upgrade from shared to private latest_parameters
+
+
+shared_facilities_with_upgrade_cost as
+(Select a.*, b.parameter_value, b.date_created
+From shared_facilities_num a, ucesbwe.latest_parameter b
+Where b.parameter_item_name = 'shared_facilities_to_private')
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 8. Sum up the total cost for upgrading these shared facilities
+
+Select sum(total_shared_facilities * parameter_value) as total_cost_upgrade_to_private
+From shared_facilities_with_upgrade_cost;
+
+
+
+
+
+--===============================================================
+--===============================================================
+--Decision_4: A fire hydrant can cover a 500 metres range, figure out how much is needed to upgrade the pitches that are not covered by fire hydrants.
+
+With
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. Select pitches that run on gas
+
+pitches_run_on_gas as
+(Select pitch_number, pitch_energy_supply, location as pitch_location
+From ucesbwe.pitch
+Where pitch_energy_supply = 'carlo gas'),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. Select fire hydrants
+
+fire_hydrant_locations as
+(select on_site_facility_name, location as fire_hydrant_location
+From ucesbwe.on_site_facilities
+Where on_site_facility_name like '%fire hydrant%'),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. Cartesian join fire hydrants with pitches run on gas
+
+fire_hydrants_and_pitches as
+(Select a.*, b.*
+From pitches_run_on_gas a, fire_hydrant_locations b),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 4. Adding one column to record how many fire hydrants covers the pitch
+
+coverage_count as
+(Select *, case when st_intersects(pitch_location, st_buffer(fire_hydrant_location,500)) then 1 else 0 end as intersect_count
+From fire_hydrants_and_pitches),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. sum up intersect count and group by pitch_number
+
+pitches_coverage_count as
+(Select pitch_number, sum(intersect_count) as intersect_count
+from coverage_count
+Group by pitch_number),
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 6. filter out the pitches not covered by selecting the records where intersect_count is 0
+
+pitches_not_covered as
+(Select pitch_number from pitches_coverage_count where intersect_count = 0),
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 7. Add cost to upgrade to electricity
+
+pitches_upgrade_electricity_cost as
+(select a.*, b.*
+From pitches_not_covered a, ucesbwe.latest_parameter b
+Where b.parameter_item_name = 'carlo_gas_to_electricity')
+
+
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 8. Calculate how much it costs to upgrade the pitches run on gas that are not covered by any fire hydrants
+
+Select sum(parameter_value), date_created as total_cost_upgrade_to_electricity 
+from pitches_upgrade_electricity_cost
+Group by date_created;
+
+
+
+
+--===============================================================
+--Decision_5: Base level nested question: It is needed to convert the ground surface types to multi-surface for all pitches in order to provide better service. Calculate the average and total costs to accomplish this conversion.
+
+select * from ucesbwe.pitches_ground_surface_conversion_cost;
+
+--===============================================================
+--Decision_6: Middle level nested question: Find the zone that is the most costly to convert the ground surface types to multi-surface.
+
+Select * from ucesbwe.zones_with_highest_ground_surface_conversion_cost;
+
+--===============================================================
+--Decision_7: Top level nested question: Find which site costs more to convert current ground surface to multi-surface.
+
+Select * from ucesbwe.site_with_higher_ground_surface_conversion_cost;
+
+
+
+
+
+
+

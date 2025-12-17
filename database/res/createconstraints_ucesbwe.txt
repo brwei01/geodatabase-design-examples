@@ -1,0 +1,100 @@
+alter table ucesbwe.bus_station 
+add constraint bus_station_pk 
+primary key (bus_station_id);
+
+alter table ucesbwe.bus_station_cleaner 
+add constraint bus_station_cleaner_pk 
+primary key (bus_station_cleaner_id);
+
+alter table ucesbwe.cleaners 
+add constraint cleaners_pk 
+primary key (cleaner_id);
+
+alter table ucesbwe.waiting_room 
+add constraint waiting_room_pk 
+primary key (waiting_room_id);
+
+alter table ucesbwe.air_quality_sensors 
+add constraint air_quality_sensors_pk 
+primary key (sensor_id);
+
+alter table ucesbwe.air_quality_values 
+add constraint air_quality_values_pk 
+primary key (air_quality_id);
+
+
+
+alter table ucesbwe.bus_station_cleaner 
+	add constraint bus_station_cleaner_fkbs
+	foreign key (bus_station_id) references
+	ucesbwe.bus_station(bus_station_id);
+
+alter table ucesbwe.bus_station_cleaner 
+	add constraint bus_station_cleaner_fkcl
+	foreign key (cleaner_id) references
+	ucesbwe.cleaners(cleaner_id);
+
+alter table ucesbwe.waiting_room
+	add constraint waiting_room_fk
+	foreign key (bus_station_id) references
+	ucesbwe.bus_station(bus_station_id);
+
+alter table ucesbwe.air_quality_sensors
+	add constraint air_quality_sensors_fk
+	foreign key (waiting_room_id) references
+	ucesbwe.waiting_room (waiting_room_id);
+	
+alter table ucesbwe.air_quality_values
+	add constraint air_quality_values_fk
+	foreign key (sensor_id) references
+	ucesbwe.air_quality_sensors (sensor_id);
+
+
+
+
+
+
+alter table ucesbwe.bus_station_cleaner
+	add constraint hours_per_week_check
+	check (hours_per_week < 49);
+
+
+
+
+
+
+
+alter table ucesbwe.bus_station
+	add constraint bus_station_unique
+	unique (location);
+	
+alter table ucesbwe.bus_station_cleaner
+	add constraint bus_station_cleaner_unique
+	unique (bus_station_id, cleaner_id);
+
+alter table ucesbwe.cleaners
+	add constraint cleaners_unique
+	unique (cleaner_name, cleaner_surname, date_of_birth);
+
+alter table ucesbwe.waiting_room
+	add constraint waiting_room_unique
+	unique (location);
+
+alter table ucesbwe.air_quality_sensors
+	add constraint air_quality_sensors_unique
+	unique (location);
+
+alter table ucesbwe.air_quality_values
+	add constraint air_quality_values_unique
+	unique (reading_timestamp, sensor_id);
+
+
+
+
+
+
+
+
+
+
+

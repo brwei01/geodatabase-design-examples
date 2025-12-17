@@ -1,0 +1,44 @@
+Insert into ucesbwe.bus_station
+(bus_station_id, last_repainted, name, location)
+values
+(DEFAULT, '2019-03-20', 'Main Bus Station 342',st_geomfromtext('POLYGON((100684 101934,101934 101934,101934 105074,100684 105074,100684 101934))', 27700));
+
+
+Insert into ucesbwe.waiting_room
+(waiting_room_id, bus_station_id, opening_time, closing_time, location)
+values
+(DEFAULT, (select bus_station_id from ucesbwe.bus_station bs where bs.name = 'Main Bus Station 342'),6.30, 19.30, st_geomfromtext('POLYGON((100734 101984,101884 101984,101884 105024,100734 105024,100734 101984))',27700));
+
+
+Insert into ucesbwe.air_quality_sensors
+(sensor_make, sensor_installation_date, sensor_id, waiting_room_id, location)
+Values
+('UCL Sensors 342', '2023-12-07', DEFAULT, (select waiting_room_id from ucesbwe.waiting_room wr where st_intersects(wr.location, (st_geomfromtext('POINT(100784 102034)',27700)))), st_geomfromtext('POINT(100784 102034)',27700)),
+('UCL Sensors 228', '2023-12-11', DEFAULT, (select waiting_room_id from ucesbwe.waiting_room wr where st_intersects(wr.location, (st_geomfromtext('POINT(100789 102036)',27700)))), st_geomfromtext('POINT(100789 102036)',27700)),
+('UCL Sensors 171', '2023-12-13', DEFAULT, (select waiting_room_id from ucesbwe.waiting_room wr where st_intersects(wr.location, (st_geomfromtext('POINT(100794 102046)',27700)))), st_geomfromtext('POINT(100794 102046)',27700));
+
+
+Insert into ucesbwe.air_quality_values
+(air_quality_id, sensor_id, total_voc, reading_timestamp, temperature, humidity)
+values
+(DEFAULT, (select sensor_id from ucesbwe.air_quality_sensors aqs where st_astext(aqs.location)='POINT(100784 102034)'), 1070, '2024-01-01', 33.5, 75),
+(DEFAULT, (select sensor_id from ucesbwe.air_quality_sensors aqs where st_astext(aqs.location)='POINT(100789 102036)'), 1038, '2024-01-26', 33.5, 75),
+(DEFAULT, (select sensor_id from ucesbwe.air_quality_sensors aqs where st_astext(aqs.location)='POINT(100789 102036)'), 1009, '2024-02-17', 16.5, 75),
+(DEFAULT, (select sensor_id from ucesbwe.air_quality_sensors aqs where st_astext(aqs.location)='POINT(100789 102036)'), 977, '2024-02-19', 33.5, 75),
+(DEFAULT, (select sensor_id from ucesbwe.air_quality_sensors aqs where st_astext(aqs.location)='POINT(100794 102046)'), 946, '2024-02-20', 17.5, 75);
+
+
+Insert into ucesbwe.cleaners
+(cleaner_id, cleaner_name, cleaner_surname, date_of_birth, contact_number, cost_per_hour)
+Values
+(DEFAULT, 'Fhd', 'Hwq', '1970-02-23', '01441037521', 33.5),
+(DEFAULT, 'Fnk', 'Flj', '1992-05-23', '01441341225', 33.5),
+(DEFAULT, 'Fsp', 'Fkk', '1967-02-12', '01441493089', 13.5);
+
+
+Insert into ucesbwe.bus_station_cleaner
+(bus_station_id, cleaner_id, bus_station_cleaner_id, hours_per_week)
+values
+((select bus_station_id from ucesbwe.bus_station bs where bs.name = 'Main Bus Station 342'), (select cleaner_id from ucesbwe.cleaners cl where cl.cleaner_name = 'Fhd' and cl.cleaner_surname = 'Hwq' and cl.date_of_birth='1970-02-23'), DEFAULT, 16),
+((select bus_station_id from ucesbwe.bus_station bs where bs.name = 'Main Bus Station 342'), (select cleaner_id from ucesbwe.cleaners cl where cl.cleaner_name = 'Fnk' and cl.cleaner_surname = 'Flj' and cl.date_of_birth='1992-05-23'), DEFAULT, 29),
+((select bus_station_id from ucesbwe.bus_station bs where bs.name = 'Main Bus Station 342'), (select cleaner_id from ucesbwe.cleaners cl where cl.cleaner_name = 'Fsp' and cl.cleaner_surname = 'Fkk' and cl.date_of_birth='1967-02-12'), DEFAULT, 48);

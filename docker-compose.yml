@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: centenial_postgres
+    # restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: centenial_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # initialise SQL scripts
+      - ./database/01_createtable_ucesbwe.sql:/docker-entrypoint-initdb.d/01_createtable_ucesbwe.sql
+      - ./database/02_createconstraints_ucesbwe.sql:/docker-entrypoint-initdb.d/02_createconstraints_ucesbwe.sql
+      - ./database/03_createviews_ucesbwe.sql:/docker-entrypoint-initdb.d/03_createviews_ucesbwe.sql
+      # - ./database/04_insertdata_ucesbwe.sql:/docker-entrypoint-initdb.d/04_insertdata_ucesbwe.sql
+      # - ./pgdata:/var/lib/postgresql/data #数据持久化
+
+  # optional：pgAdmin（数据库管理界面）
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: centenial_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin # 持久化服务器连接，用户设置，登陆信息等。
+    depends_on:
+      - postgres
+
+volumes:
+  pgadmin-data:
+  postgres-data: #声明 PostgreSQL 的命名卷，持久化
