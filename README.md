@@ -10,7 +10,7 @@ ER diagram (illustrates the design of the geodatabase)
 
 A prototype
 ---
-<img width="75%" alt="Caravan_ER_entities" src="https://github.com/user-attachments/assets/4391140f-202a-4ea6-a28a-5001b79cad60" />
+<img width="100%" alt="Caravan_ER_entities" src="https://github.com/user-attachments/assets/4391140f-202a-4ea6-a28a-5001b79cad60" />
 
 Pyramid showing the structure of geodatabase
 ---
