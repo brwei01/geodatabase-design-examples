@@ -1,0 +1,687 @@
+--======================================
+-- get a view with the latest parameter values only
+
+-- drop the view first just in case it exists
+-- use cascade to drop any dependant views
+
+drop view if exists ucfscde.latest_parameters cascade;
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+create view ucfscde.latest_parameters as
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. to create the view we first find the latest reports using a group by statement 
+-- note in this case the group by is using three columns - the three colmuns that make each parameter unique
+
+with 
+latest_parameters as
+(select parameter_type, parameter_name, parameter_subname, max(date_created) as date_created
+from ucfscde.parameters
+group by parameter_type, parameter_name, parameter_subname)
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. we then use an inner join to get the rest of the parameter details
+select a.parameter_id, a.parameter_value, b.* from ucfscde.parameters a inner join 
+latest_parameters b
+on a.parameter_type = b.parameter_type
+and a.parameter_name = b.parameter_name
+and a.parameter_subname = b.parameter_subname 
+and a.date_created = b.date_created;
+
+--~~~~~~~~~~~~~~~ finally a select statement to test out the view
+
+select * from ucfscde.latest_parameters;
+
+
+
+--========================================================================================================================
+-- create a view showing the temperature sensors with corresponding min and max and average values
+-- required for decisions H11, H9
+
+-- drop the view first just in case it exists
+-- use cascade to drop any dependant views
+
+drop view if exists ucfscde.temperature_statistics cascade;
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- then create the view
+create view ucfscde.temperature_statistics as
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. get the minimum, maximum and average values for each sensor
+-- use a group by 
+
+with min_max_avg as
+(select max(value_degrees_c) as max_temp, avg(value_degrees_c) as avg_temp, min(value_degrees_c) as min_temp, temperature_sensor_id
+from ucfscde.temperature_values
+group by temperature_sensor_id)
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--2.  get the sensor details, using an INNER JOIN on the sensor_id
+
+select a.*, b.* from min_max_avg b inner join ucfscde.temperature_sensors a
+on a.sensor_id = b.temperature_sensor_id;
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--3.  test the view
+
+select * from ucfscde.temperature_statistics;
+
+
+
+--========================================================================================================================
+-- create a view that links all building information - criticality and invidiual and average scores
+-- required for A2, H7, H1
+
+-- drop the view first just in case it exists
+-- use cascade to drop any dependant views
+drop view if exists ucfscde.building_condition_criticality;
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- then create the view
+
+create view ucfscde.building_condition_criticality as
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 1. first get the latest condition reports for each building
+-- use distinct on and order by for this
+
+with latest_report as
+(select distinct on (building_id) building_id, user_id, report_date, 
+roof_condition, opaque_facade_condition, transparent_facade_condition, doors_gates_condition,
+elevators_condition, stairs_condition, disabled_access_condition 
+from ucfscde.building_condition
+order by building_id,report_date desc),
+
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 2. now work out the average condition for the building overall 
+-- note the use of the nested query to find out the weighting from the parameters table
+-- in this case the query is nested in the SELECT line - i.e. the first line of the statement
+-- this only works when you are 100% sure that there is only ONE value that meets the criteria
+-- so we use the latest_parameters VIEW so that we only get the latest value for each parameter
+-- we use UNION ALL to generate one big 'table' (called height_weights)
+-- note that the resulting table has one row per condition rather than having all the conditions listed as columns
+-- so the table has columns as follows:  building_id, weighting and the actual indicator value from the report
+-- this means that later on we can multiply across each row
+-- put an extra column called asset_component so that we can tell what value each row relates to
+
+height_weights as
+
+-- roof condition
+(select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='roof_condition') as weighting, roof_condition as asset_health_indicator_id, 'roof_condition' as asset_component from latest_report 
+union all
+
+-- opaque facade
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='opaque_facade_condition') as weighting, opaque_facade_condition   as asset_health_indicator_id,'opaque_facade_condition' as asset_component from latest_report 
+union all 
+
+-- transparent facade
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='transparent_facade_condition' ) as weghting, transparent_facade_condition as asset_health_indicator_id,'transparent_facade_condition' as asset_component from latest_report
+union all
+
+-- doors and gates
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='doors_gates_condition') as weighting, doors_gates_condition  as asset_health_indicator_id, 'doors_gates_condition' as asset_component from latest_report 
+union all
+
+-- disabled access
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='disabled_access_condition') as weighting, disabled_access_condition  as asset_health_indicator_id,'disabled_access_condition' as asset_component from latest_report 
+union all
+
+-- elevators
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='elevators_condition') as weighting, elevators_condition  as asset_health_indicator_id,'elevators_condition' as asset_component from latest_report 
+union all
+
+-- stairs
+select building_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='buildings' and parameter_subname ='stairs_condition') as weighting, stairs_condition  as asset_health_indicator_id, 'stairs_condition' as asset_component from latest_report),
+
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 3. get the valid asset_health_indicator values to use for the average values
+-- we only want weightings that are valid to count in the average - not those where the component doesn't exist or where no rating could be made
+-- so we need to ignore any readings that say 'unable to read' or 'item does not exist'
+-- so we need to remove these from the height_weights table that we just created
+
+
+height_weights_no_missing as
+(select * from height_weights 
+where asset_health_indicator_id not in (select asset_health_indicator_id 
+from ucfscde.asset_health_indicator where asset_health_indicator_description like '%Unable%' or asset_health_indicator_description like '%Item does not%')),
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 4. aggregate up and find the average depending on the number of valid readings
+-- i.e. first calculate the weighted value for each component by multiplying by the weighting
+-- then divide the sum of this by the total possible weightings to get a resulting average value
+
+aggregated as
+(select building_id, sum(asset_health_indicator_id*weighting)/sum(weighting) as asset_health_indicator
+ from height_weights_no_missing
+group by building_id),
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 5. round it up and link back to see what that average actually is in terms of text 
+-- Numbers don't mean much to the decision makers so we need to put the text
+
+building_health as
+(select a.*, b.asset_health_indicator_description
+from aggregated a left join ucfscde.asset_health_indicator b
+on ceil(a.asset_health_indicator) = b.asset_health_indicator_id),
+
+
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 6. now join the condition status to the latest condition report so that we can get the text instead of numbers for the condition values 
+-- this makes it more user-friendly
+-- multiple joins are required as there are different condition elements
+-- inner joins are fine here as we assume that the condition values are valid - i.e. exist in the condition table
+
+report_condition as 
+(select a.building_id, a.user_id, a.report_date, 
+b.asset_health_indicator_description as roof_condition,
+c.asset_health_indicator_description as opaque_facade_condition,
+d.asset_health_indicator_description as transparent_facade_condition,
+e.asset_health_indicator_description as doors_gates_condition,
+f.asset_health_indicator_description as disabled_access_condition,
+g.asset_health_indicator_description as elevators_condition,
+h.asset_health_indicator_description as stairs_condition
+from latest_report a 
+inner join ucfscde.asset_health_indicator b on a.roof_condition = b.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator c on a.opaque_facade_condition = c.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator d on a.transparent_facade_condition = d.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator e on a.doors_gates_condition = e.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator f on a.disabled_access_condition = f.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator g on a.elevators_condition = g.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator h on a.stairs_condition = h.asset_health_indicator_id),
+
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 7. now get the user information so that we can associate the report with a user name rather than an aribrary user id
+-- again an inner join here as we assume that the user will exist
+
+report_user as
+(select h.*, j.user_name
+from report_condition h inner join ucfscde.users j
+on h.user_id = j.user_id),
+
+
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 8. start to stitch things together - join the report information (with the added user information and text) the building information
+-- Note that this doesn't make use of the table directly above it in Step 7
+
+building_condition as
+(select d.location, d.building_name, d.university_id, d.criticality as criticality_id, f.* 
+from ucfscde.buildings d inner join report_user f
+on d.building_id = f.building_id),
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 9. add the averages
+
+building_condition_and_all_health as
+(select a.*, b.asset_health_indicator, b.asset_health_indicator_description
+from building_condition a left join building_health b
+on a.building_id = b.building_id),
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 10. add the criticality
+criticality as
+(select a.*, b.criticality
+from building_condition_and_all_health a inner join ucfscde.criticality b
+on a.criticality_id = b.criticality_id)
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 11. now join this to the university
+select k.*, l.university_name 
+from criticality k inner join ucfscde.university l
+on k.university_id = l.university_id;
+
+--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- 12.  run a select statement to test the view
+
+select * from ucfscde.building_condition_criticality;
+
+
+
+--==============================================================================================================================
+-- window condition criticality cost
+
+drop view if exists ucfscde.window_condition_criticality_cost cascade;
+create or replace view ucfscde.window_condition_criticality_cost as
+-- first get the latest condition reports
+
+with latest_report as
+(select distinct on (window_id) window_id, user_id, report_date, condition
+from ucfscde.window_condition
+order by window_id,report_date desc),
+
+-- now join this to the condition status
+report_condition as 
+(select a.*, b.asset_health_indicator_description 
+from latest_report a inner join ucfscde.asset_health_indicator b
+on a.condition = b.asset_health_indicator_id),
+
+
+-- now get the user information
+report_user as
+(select h.*, j.user_name
+from report_condition h inner join ucfscde.users j
+on h.user_id = j.user_id),
+
+-- now join this to the window information
+-- use a left join as some windows won't have health reports
+window_condition as
+(select d.window_id, d.location, d.room_id, d.window_installation_date,d.floor,d.window_type, d.criticality as criticality_id, f.user_id, f.report_date, f.condition, f.asset_health_indicator_description, f.user_name
+from ucfscde.windows d left join report_user f
+on d.window_id = f.window_id),
+
+-- now include the criticality information
+-- use a left join as not all windows will have criticality information
+window_criticality as
+(select a.criticality, b.* 
+from window_condition b left join ucfscde.criticality a
+on a.criticality_id = b.criticality_id),
+
+window_rooms as
+(select a.room_use, a.room_number,b.*
+	 from ucfscde.rooms a inner join window_criticality b
+	 on a.room_id=b.room_id),
+
+-- now include cost information
+	 window_cost as
+	(select a.window_type, a.window_id, b.parameter_value as cost_per_m2, st_3darea(a.location) * b.parameter_value as cost
+	 from ucfscde.windows a inner join ucfscde.latest_parameters b
+	 on a.window_type = b.parameter_subname
+	 and b.parameter_name ='windows'
+	 and b.parameter_type='cost')
+
+
+-- finally join it all together
+select a.*, b.cost_per_m2, b.cost
+from window_rooms a inner join window_cost b
+on a.window_id = b.window_id;
+
+
+
+
+select * from ucfscde.window_condition_criticality_cost;
+
+
+--===================================================
+--ethernet cost calculations
+drop view if exists ucfscde.ethernet_condition_criticality_cost ;
+
+create view ucfscde.ethernet_condition_criticality_cost as
+
+with calc_health as
+(select a.*,
+(case 
+  when (DATE_PART('year', AGE(now(), installation_date)) < 3)  then (select  asset_health_indicator_id from ucfscde.asset_health_indicator where asset_health_indicator_description like '%serviceable%')
+	when (DATE_PART('year', AGE(now(), installation_date)) < 6)  then (select  asset_health_indicator_id from ucfscde.asset_health_indicator where asset_health_indicator_description like '%high usage%')
+	when (DATE_PART('year', AGE(now(), installation_date)) < 11)  then (select  asset_health_indicator_id from ucfscde.asset_health_indicator where  asset_health_indicator_description like '%replacement within 5%')
+	else (select asset_health_indicator_id from ucfscde.asset_health_indicator where asset_health_indicator_description like '%overdue%')
+end ) as health_id
+from ucfscde.ethernet_cables a),
+
+-- join it back to the health rating to get the text as well
+health_details as
+(select a.*, b.asset_health_indicator_description
+from calc_health a inner join ucfscde.asset_health_indicator b
+on a.health_id = b.asset_health_indicator_id),
+
+-- join with the criticality data
+criticality as 
+(select a.*, b.criticality as criticality_description
+from health_details a inner join ucfscde.criticality b
+on a.criticality= b.criticality_id),
+
+-- work out the length of cable inside the building
+-- note workaround due to st_3dintersection issue
+cable_buildings as
+(select sum(intersection_length) as internal_length, ethernet_id from
+(SELECT c.building_id, c1.ethernet_id,
+     ST_length(ST_intersection(st_force2d(st_envelope(c.location)), c1.location))  AS intersection_length
+ FROM ucfscde.buildings c, ucfscde.ethernet_cables c1) d
+group by ethernet_id),
+
+-- cost of the portion of the cable outside the building
+lengths as
+(select  e.ethernet_id, internal_length, (st_3dlength(e.location) - f.internal_length) as external_length from ucfscde.ethernet_cables e inner join cable_buildings f
+on e.ethernet_id = f.ethernet_id),
+
+-- calculate the costs
+install_costs as
+(select g.ethernet_id, g.internal_length, g.external_length, g.internal_length * (select parameter_value as cost_per_m from ucfscde.latest_parameters b where parameter_type='cost' and parameter_name='ethernet_cables'  and parameter_subname='indoor install cost') as cost_inside, g.external_length * (select parameter_value as cost_per_m from ucfscde.latest_parameters b where parameter_type='cost' and parameter_name='ethernet_cables'  and parameter_subname='outdoor install cost') as cost_outside
+from lengths g)
+ 
+-- join everything together
+select h.*, i.internal_length, i.external_length, i.cost_inside, i.cost_outside, i.cost_inside + i.cost_outside as total_cost
+from criticality h inner join install_costs i
+on h.ethernet_id = i.ethernet_id;
+
+
+select * from ucfscde.ethernet_condition_criticality_cost;
+
+---- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+--========================================================================================================================
+
+-- all the rooms details
+
+drop view if exists ucfscde.room_condition_criticality_cost cascade;
+create view ucfscde.room_condition_criticality_cost as
+
+with latest_report as
+(select distinct on (room_id) room_id, user_id, report_date, ceiling_condition, wall_condition,
+ doors_condition, windows_condition, furniture_equipment_condition, heating_system_condition, air_conditioning_condition, sockets_condition, lighting_and_switches_condition
+from ucfscde.room_condition
+order by room_id,report_date desc),
+
+
+condition_weights as
+(select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='ceiling_condition') as weighting, ceiling_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='wall_condition') as weighting, wall_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='doors_condition') as weighting, doors_condition as asset_health_indicator_id from latest_report
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='windows_condition') as weighting, windows_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='furniture_equipment_condition') as weighting, furniture_equipment_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='heating_system_condition') as weighting, heating_system_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='air_conditioning_condition') as weighting, air_conditioning_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='sockets_condition') as weighting, sockets_condition as asset_health_indicator_id from latest_report 
+union all
+select room_id, (select parameter_value from ucfscde.latest_parameters where parameter_type = 'weighting' and parameter_name ='rooms' and parameter_subname ='lighting_and_switches_condition') as weighting, lighting_and_switches_condition as asset_health_indicator_id from latest_report),
+
+
+
+condition_weights_no_missing as
+(select * from condition_weights 
+where asset_health_indicator_id not in (select asset_health_indicator_id 
+from ucfscde.asset_health_indicator where asset_health_indicator_description like '%Unable%' or asset_health_indicator_description like '%Item does not%')),
+
+
+-- aggregate up and find the average depending on the number of valid readings
+aggregated as
+(select a.room_id, sum(asset_health_indicator_id*weighting)/sum(weighting) as average_health_indicator_id
+ from condition_weights_no_missing a
+group by room_id),
+
+
+-- round it up and link back to see what that average actually is in terms of text 
+-- left join just in case there is an incorrect error
+room_health as
+(select a.*, b.asset_health_indicator_description, b.asset_health_indicator_id
+from aggregated a left join ucfscde.asset_health_indicator b
+on ceil(a.average_health_indicator_id) = b.asset_health_indicator_id),
+
+
+
+-- join the room_condition report to the condition status
+-- multiple times as there are different condition elements
+report_condition as 
+(select a.room_id, a.user_id, a.report_date, 
+b.asset_health_indicator_description as ceiling_condition,
+c.asset_health_indicator_description as wall_condition,
+d.asset_health_indicator_description as doors_condition,
+e.asset_health_indicator_description as windows_condition,
+f.asset_health_indicator_description as furniture_equipment_condition,
+g.asset_health_indicator_description as heating_system_condition,
+j.asset_health_indicator_description as air_conditioning_condition,
+i.asset_health_indicator_description as sockets_condition,
+j.asset_health_indicator_description as lighting_and_switches_condition
+from latest_report a 
+inner join ucfscde.asset_health_indicator b on a.ceiling_condition = b.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator c on a.wall_condition = c.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator d on a.doors_condition = d.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator e on a.windows_condition = e.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator f on a.furniture_equipment_condition = f.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator g on a.heating_system_condition = g.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator h on a.air_conditioning_condition = h.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator i on a.sockets_condition = i.asset_health_indicator_id
+inner join ucfscde.asset_health_indicator j on a.lighting_and_switches_condition = j.asset_health_indicator_id),
+
+
+report_user as
+(select h.*, j.user_name
+from report_condition h inner join ucfscde.users j
+on h.user_id = j.user_id),
+
+--- and join back to the room information
+room_condition as
+(select d.location, d.room_number, d.room_use, d.building_id, d.criticality as criticality_id, f.* 
+from ucfscde.rooms d left join report_user f
+on d.room_id = f.room_id),
+
+-- add the averages
+room_condition_and_all_health as
+(select a.*, b.asset_health_indicator_id, b.asset_health_indicator_description
+from room_condition a left join room_health b
+on a.room_id = b.room_id),
+
+--join cost information
+room_with_cost as
+(select a.*,  b.parameter_subname, b.parameter_value as update_cost_per_sq_m
+from room_condition_and_all_health a left join ucfscde.latest_parameters b
+on concat('annual update - ',a.room_use) = b.parameter_subname
+and b.parameter_type = 'cost'
+and b.parameter_name = 'rooms'),
+
+
+-- add the criticality
+criticality as
+(select a.*, b.criticality
+from room_with_cost a inner join ucfscde.criticality b
+on a.criticality_id = b.criticality_id)
+
+select k.*, l.building_name 
+from criticality k inner join ucfscde.buildings l
+on k.building_id = l.building_id;
+
+select * from ucfscde.room_condition_criticality_cost;
+
+
+-- B5.	Budget:  what is the total cost per building of the carbon interventions?  [Links to B2 and C3]
+-- triple glazing, solar and cladding
+
+drop view if exists ucfscde.carbon_reduction_cost_building cascade;
+create view ucfscde.carbon_reduction_cost_building as
+with solar_cost as
+(select st_area(location) * 
+
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'cost' and parameter_name= 'buildings' and parameter_subname='solar cost')
+
+as cost, building_id from ucfscde.buildings),
+
+-- cost of the triple glazing is fixed per sq m of window
+building_windows as
+(select a.location, a.window_type,a.window_id, b.building_id
+from ucfscde.windows a inner join ucfscde.buildings b
+on st_3dintersects(a.location,b.location)),
+
+
+triple_glazing_cost as
+(select sum(cost) as cost, building_id from 
+(select a.building_id, a.location, (st_3darea(a.location) * 
+
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'cost' and parameter_name= 'windows' and parameter_subname='double glazed')) as cost
+
+from building_windows a) x
+group by building_id),
+
+individual_faces as
+(SELECT building_id, st_3darea((ST_Dump(location)).geom) AS surface_area
+from ucfscde.buildings),
+ 
+building_area as
+(select sum(surface_area) as total_area, building_id
+from individual_faces
+group by building_id),
+
+
+-- we are over counting as we are counting the base so subtract
+final_area as
+(select a.total_area  - st_3darea(b.location) as surface_area, a.building_id
+from building_area a inner join ucfscde.buildings b
+on a.building_id= b.building_id),
+
+
+cladding_cost as
+(select a.building_id, a.surface_area * 
+
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'cost' and parameter_name= 'buildings' and parameter_subname='cladding cost')
+
+ as cost 
+from final_area a),
+
+-- calculate cost
+cost_per_building as
+(select sum(cost) as cost, building_id from
+(select building_id, cost from solar_cost
+union all
+select building_id, cost from triple_glazing_cost
+union all
+select building_id, cost from cladding_cost) b
+group by building_id)
+
+-- and now link for further building information
+
+select  b.*, c.cost as triple_glazing_cost, d.cost as cladding_cost, e.cost as solar_cost, a.cost as total_cost
+from cost_per_building a inner join ucfscde.buildings b
+on a.building_id = b.building_id
+inner join solar_cost e on a.building_id = e.building_id
+inner join triple_glazing_cost c on a.building_id = c.building_id
+inner join cladding_cost d on a.building_id  = d.building_id;
+
+
+-- ====================================================
+-- C6.	Carbon Reduction: what are the per building energy savings by installing cladding and solar panels and triple glazing? [Links to C3 and C2]
+
+drop view if exists ucfscde.carbon_reduction_building cascade;
+create view ucfscde.carbon_reduction_building as 
+
+-- how much surface area do we have on the roof for solar panels?
+with building_windows as
+(select a.location, a.window_type,a.window_id, b.building_id
+from ucfscde.windows a inner join ucfscde.buildings b
+on st_3dintersects(a.location,b.location)),
+
+solar_saving as
+(select st_area(location) * 
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'energy saving' and parameter_name= 'buildings' and parameter_subname='solar energy saving per sq m of panel') as annual_kwh_saving, building_id from ucfscde.buildings),
+
+-- savings from the triple glazing (use previous information)
+-- use the pre-created view to get the windows for each building
+
+triple_glazing_saving as
+(select sum(d.annual_kwh_saving) as annual_kwh_saving, building_id from (
+(select building_id, st_3darea(location) * 
+(select parameter_value from ucfscde.latest_parameters where 
+ parameter_type = 'energy saving' and parameter_name= 'windows' and 
+ parameter_subname='triple over double')
+ as annual_kwh_saving from building_windows where window_type like '%double%')
+union all
+(select building_id, st_3darea(location) * 
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'energy saving' and parameter_name= 'windows' and parameter_subname='triple over single')
+ as annual_kwh_saving from building_windows where window_type like '%single%')) d
+group by building_id),
+
+
+cladding_saving as
+(select st_volume(a.location) * 
+(select parameter_value from ucfscde.latest_parameters where parameter_type = 'energy saving' and parameter_name= 'buildings' and parameter_subname='cladding energy saving') as annual_kwh_saving, building_id from ucfscde.buildings a),
+
+-- calculate savings
+savings_per_building as
+(select sum(annual_kwh_saving) as kwh_saving, building_id from
+(select * from solar_saving
+union all
+select * from triple_glazing_saving
+union all
+select * from cladding_saving) b
+group by building_id)
+
+-- join on to the building information
+select a.*, b.kwh_saving, c.annual_kwh_saving as solar_kwh_saving, d.annual_kwh_saving as triple_glazing_kwh_saving, e.annual_kwh_saving as cladding_kwh_saving
+from ucfscde.buildings a inner join savings_per_building b
+on a.building_id = b.building_id
+inner join solar_saving c on a.building_id = c.building_id
+inner join triple_glazing_saving d on a.building_id = d.building_id
+inner join cladding_saving e on a.building_id = e.building_id ;
+
+
+
+-- ========================================================================================
+-- ======================================= The views for the 3 levels of pyramd nesting =========================
+
+
+-- =====================================================================
+-- BUDGET
+-- =====================================================================
+-- B6.	Budget: what is the per room budget needed to cover the total cost of critical works on the rooms and associated fixtures? [Links to A5]
+-- what critical works are required?
+-- in this case it can only be the windows as sensors are not classed as critical
+-- and any critical rooms
+-- use a VIEW as we can use the informttion later on
+
+drop view if exists ucfscde.critical_works_room cascade;
+create view ucfscde.critical_works_room as
+with work_needed as (
+select sum(cost) as cost, room_id,(select a.room_use  from ucfscde.rooms a where a.room_id=room_id) as room_use,
+(select a.room_number  from ucfscde.rooms a where a.room_id=room_id) as room_number from ucfscde.window_condition_criticality_cost
+where criticality = 'Critical – the organisation cannot operate if this fails' and asset_health_indicator_description = 'In poor condition, overdue for replacement'
+group by room_id
+union all
+select  update_cost_per_sq_m as cost, room_id, room_use, room_number from ucfscde.room_condition_criticality_cost
+where criticality = 'Critical – the organisation cannot operate if this fails' and asset_health_indicator_description = 'In poor condition, overdue for replacement'),
+summary_cost as (select sum(cost) as cost, room_id
+from work_needed
+group by room_id)
+
+select a.cost,a.room_id,b.room_use,b.room_number
+from summary_cost a left join ucfscde.rooms b
+on a.room_id = b.room_id;
+
+select * from ucfscde.critical_works_room;
+
+
+
+-- =============================================
+-- B4.	Budget: KPI: what is the budget needed to cover the cost of critical interventions per building including the total cost of interventions on the rooms and fixtures in each building? [Links to B1]
+-- cost of the windows
+-- use the information from above and sum the rooms by building
+-- link the room to the building
+
+drop view if exists ucfscde.critical_works_building cascade;
+create view ucfscde.critical_works_building as
+(with room_building as
+(select a.building_id, b.cost as room_cost
+from ucfscde.rooms a left join ucfscde.critical_works_room b
+on a.room_id = b.room_id),
+
+-- and now sum by building
+room_building_cost as
+(select sum(room_cost) as room_building_cost, building_id from room_building
+group by building_id)
+
+-- link back to the building
+select a.*, (case when b.room_building_cost is null then 0 else b.room_building_cost end) as building_cost
+from ucfscde.buildings a left join room_building_cost b
+on a.building_id  = b.building_id);
+
+
+-- =============================================
+-- B1.	Budget: KPI: how much is our annual cost for interventions on elements of the estate in critical condition?
+
+drop view if exists ucfscde.critical_works_university cascade;
+create view ucfscde.critical_works_university as
+select sum(building_cost) as annual_intervention_cost
+from ucfscde.critical_works_building;
+
+
+
+
+

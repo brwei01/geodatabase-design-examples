@@ -1,0 +1,105 @@
+-- =====================================================================
+-- HUMAN COMFORT AND SAFETY
+-- =====================================================================
+
+-- H11.	Human Comfort and Safety: are any temperature sensors faulty?
+-- if they are reporting below 15 or above 30 then there is an error and the sensor needs replacing
+-- so we need to find the min and the max reading for each sensor
+select * from ucfscde.temperature_statistics where max_temp > 30 or min_temp < 15;
+
+
+-- H10.	Human Comfort and Safety: do we need to replace any windows this year?
+-- Windows need replacing if their condition is 'overdue for replacement'
+-- so we need window information and the latest condition information
+
+select * from ucfscde.window_condition_criticality_cost
+where asset_health_indicator_description like '%overdue%';
+
+-- H2.	Human Comfort and Safety: KPI:  What % of our rooms were outside comfortable temperature range for more than 1 day this year?  
+-- for this we need daily room temperature for the rooms that have sensors
+
+with room_temp_value as
+(select a.*, b.sensor_name, c.value_degrees_c, c.reading_timestamp
+from ucfscde.rooms a inner join ucfscde.temperature_sensors b
+on a.room_id = b.room_id
+inner join ucfscde.temperature_values c
+on b.sensor_id = c.temperature_sensor_id),
+
+
+-- sort the readings by day and find the max and min readings
+temp_by_day as (select min(value_degrees_c) as min, max(value_degrees_c) as max, date(reading_timestamp), room_id
+from room_temp_value
+group by room_id, date(reading_timestamp)),
+
+-- and find the ones that exceed or are below
+room_days as (select count(*) as num_out_of_range, room_id
+from temp_by_day
+where max > (select parameter_value from ucfscde.latest_parameters where parameter_type = 'comfort' and parameter_name= 'temperature_sensor' and parameter_subname='max_temperature_value')
+   or min < (select parameter_value from ucfscde.latest_parameters where parameter_type = 'comfort' and parameter_name= 'temperature_sensor' and parameter_subname='min_temperature_value')
+group by room_id),
+
+-- number outside of temperature rating
+num_outside as (
+select count(*) as num_outside
+from room_days
+where num_out_of_range > 1),
+
+-- how many rooms actually have sensors
+rooms_with_sensors as
+(select count(*) as num_rooms from (select distinct(room_id) from room_temp_value) x)
+
+
+select (a.num_outside / b.num_rooms) * 100 as percent_out_of_comfort
+from num_outside a, rooms_with_sensors b;
+
+
+-- =====================================================================
+-- CARBON REDUCTION 
+-- =====================================================================
+-- C3.	Carbon Reduction: which carbon reduction intervention will give us most value for money?
+with reduction_cost as
+(select sum(triple_glazing_cost) as triple_glazing_cost,
+sum(solar_cost) as solar_cost,
+sum(cladding_cost) as cladding_cost,
+sum(total_cost) as total_cost
+from ucfscde.carbon_reduction_cost_building),
+
+kwh_saved as
+(select sum(kwh_saving) as total_kwh_saving, sum(cladding_kwh_saving) as cladding_kwh_saving, sum(solar_kwh_saving) as solar_kwh_saving,
+sum(triple_glazing_kwh_saving) as triple_glazing_kwh_saving from ucfscde.carbon_reduction_building)
+
+
+select b.solar_kwh_saving/a.solar_cost as solar_kwh_saved_per_£, b.cladding_kwh_saving/a.cladding_cost as cladding_kwh_saved_per_£, 
+b.triple_glazing_kwh_saving/a.triple_glazing_cost as triple_glazing_kwh_saved_per_£
+from reduction_cost a, kwh_saved b;
+
+
+-- ====================================================
+-- PYRAMID DECISIONS - CRITICAL WORKS COSTS
+-- ====================================================
+
+-- =====================================================================
+-- BUDGET
+-- =====================================================================
+-- B6.	Budget: what is the per room budget needed to cover the total cost of critical works on the rooms and associated fixtures? 
+-- what critical works are required?
+-- in this case it can only be the windows as sensors are not classed as critical
+-- and any critical rooms
+
+
+select * from ucfscde.critical_works_room;
+
+
+--=============================================================================
+-- B4.	Budget: KPI: what is the budget needed to cover the cost of critical interventions per building including the total cost of interventions on the rooms and fixtures in each building? [Links to B1]
+-- cost of the windows
+-- use the information from above and sum the rooms by building
+-- link the room to the building
+
+select * from ucfscde.critical_works_building;
+
+
+--=====================================================
+-- B1.	Budget: KPI: how much is our annual cost for interventions on elements of the estate in critical condition?
+
+select * from ucfscde.critical_works_university;

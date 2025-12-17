@@ -17,6 +17,11 @@ services:
       # - ./database/04_insertdata_ucesbwe.sql:/docker-entrypoint-initdb.d/04_insertdata_ucesbwe.sql
       # - ./pgdata:/var/lib/postgresql/data #数据持久化
 
+      # ucfscde schema 的 SQL 文件（新增）
+      # - ./database/centennial/05_createtable_ucfscde.sql:/docker-entrypoint-initdb.d/05_createtable_ucfscde.sql
+      # - ./database/centennial/06_createconstraints_ucfscde.sql:/docker-entrypoint-initdb.d/06_createconstraints_ucfscde.sql
+      # - ./database/centennial/07_insertdata_ucfscde.sql:/docker-entrypoint-initdb.d/07_insertdata_ucfscde.sql
+
   # optional：pgAdmin（数据库管理界面）
   pgadmin:
     image: dpage/pgadmin4:latest
