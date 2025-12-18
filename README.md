@@ -3,7 +3,7 @@ This case study has been inspired by the facilities and asset management tasks r
 
 
 
-ER diagram (illustrates the design of the geodatabase)
+ER(entity-relationship) diagram (illustrates the design of the geodatabase)
 ---
 <img width="2147" height="777" alt="Caravan_ER_diagram" src="https://github.com/user-attachments/assets/a011b200-771b-4010-881b-e8d5e85cebef" />
 
